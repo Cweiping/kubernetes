@@ -163,25 +163,25 @@ func TestWaitForPathToExist(t *testing.T) {
 		"/dev/disk/by-path/pci-*-ip-127.0.0.1:3260-iqn.2014-12.com.example:test.tgt00-lun-0"}
 	fpath := "/dev/disk/by-path/pci-0000:00:00.0-ip-127.0.0.1:3260-iqn.2014-12.com.example:test.tgt00-lun-0"
 
-	exist := waitForPathToExistInternal(&devicePath[0], 1, "tcp", fakeOsStat, filepath.Glob)
+	exist, _ := waitForPathToExistInternal(&devicePath[0], 1, "tcp", fakeOsStat, filepath.Glob)
 	if exist == false {
 		t.Errorf("waitForPathToExist: could not find path %s", devicePath[0])
 	}
-	exist = waitForPathToExistInternal(&devicePath[0], 1, "fake_iface", fakeOsStat, filepath.Glob)
+	exist, _ = waitForPathToExistInternal(&devicePath[0], 1, "fake_iface", fakeOsStat, filepath.Glob)
 	if exist != false {
 		t.Errorf("waitForPathToExist: wrong code path called for %s", devicePath[0])
 	}
 
-	exist = waitForPathToExistInternal(&devicePath[1], 1, "fake_iface", os.Stat, fakeFilepathGlob)
+	exist, _ = waitForPathToExistInternal(&devicePath[1], 1, "fake_iface", os.Stat, fakeFilepathGlob)
 	if exist == false {
 		t.Errorf("waitForPathToExist: could not find path %s", devicePath[1])
 	}
-	exist = waitForPathToExistInternal(&devicePath[1], 1, "tcp", os.Stat, fakeFilepathGlob)
+	exist, _ = waitForPathToExistInternal(&devicePath[1], 1, "tcp", os.Stat, fakeFilepathGlob)
 	if exist != false {
 		t.Errorf("waitForPathToExist: wrong code path called for %s", devicePath[1])
 	}
 
-	exist = waitForPathToExistInternal(&devicePath[1], 1, "fake_iface", os.Stat, fakeFilepathGlob2)
+	exist, _ = waitForPathToExistInternal(&devicePath[1], 1, "fake_iface", os.Stat, fakeFilepathGlob2)
 	if devicePath[1] != fpath {
 		t.Errorf("waitForPathToExist: wrong code path called for %s", devicePath[1])
 	}

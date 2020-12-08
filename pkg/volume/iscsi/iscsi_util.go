@@ -18,6 +18,7 @@ package iscsi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -123,18 +124,17 @@ func updateISCSINode(b iscsiDiskMounter, tp string) error {
 type StatFunc func(string) (os.FileInfo, error)
 type GlobFunc func(string) ([]string, error)
 
-func waitForPathToExist(devicePath *string, maxRetries int, deviceTransport string) bool {
+func waitForPathToExist(devicePath *string, maxRetries int, deviceTransport string) (bool, error) {
 	// This makes unit testing a lot easier
 	return waitForPathToExistInternal(devicePath, maxRetries, deviceTransport, os.Stat, filepath.Glob)
 }
 
-func waitForPathToExistInternal(devicePath *string, maxRetries int, deviceTransport string, osStat StatFunc, filepathGlob GlobFunc) bool {
+func waitForPathToExistInternal(devicePath *string, maxRetries int, deviceTransport string, osStat StatFunc, filepathGlob GlobFunc) (bool, error) {
 	if devicePath == nil {
-		return false
+		return false, errors.New("devicePath is nil")
 	}
-
+	var err error
 	for i := 0; i < maxRetries; i++ {
-		var err error
 		if deviceTransport == "tcp" {
 			_, err = osStat(*devicePath)
 		} else {
@@ -149,17 +149,17 @@ func waitForPathToExistInternal(devicePath *string, maxRetries int, deviceTransp
 			}
 		}
 		if err == nil {
-			return true
+			return true, nil
 		}
 		if !os.IsNotExist(err) {
-			return false
+			return false, err
 		}
 		if i == maxRetries-1 {
 			break
 		}
 		time.Sleep(time.Second)
 	}
-	return false
+	return false, err
 }
 
 // getDevicePrefixRefCount: given a prefix of device path, find its reference count from /proc/mounts
@@ -419,15 +419,16 @@ func (util *ISCSIUtil) AttachDisk(b iscsiDiskMounter) (string, error) {
 			} else {
 				devicePath = strings.Join([]string{"/dev/disk/by-path/pci", "*", "ip", tp, "iscsi", b.Iqn, "lun", b.Lun}, "-")
 			}
-
-			if exist := waitForPathToExist(&devicePath, deviceDiscoveryTimeout, iscsiTransport); !exist {
-				klog.Errorf("Could not attach disk: Timeout after %ds", deviceDiscoveryTimeout)
+			klog.V(2).Info("start waitForPathToExist ...")
+			if exist, err := waitForPathToExist(&devicePath, deviceDiscoveryTimeout, iscsiTransport); !exist {
+				klog.Errorf("Could not attach disk: Timeout after %ds, last err seen:%s", deviceDiscoveryTimeout, err)
 				// update last error
 				lastErr = fmt.Errorf("Could not attach disk: Timeout after %ds", deviceDiscoveryTimeout)
 				continue
 			} else {
 				devicePaths[tp] = devicePath
 			}
+			klog.V(2).Info("waitForPathToExist end...")
 		}
 		klog.V(4).Infof("iscsi: tried all devices for %q %d times, %d paths found", b.Iqn, i, len(devicePaths))
 		if len(devicePaths) == 0 {
