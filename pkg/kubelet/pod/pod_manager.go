@@ -46,6 +46,7 @@ import (
 // status of the mirror pod always reflects the actual status of the static
 // pod. When a static pod gets deleted, the associated orphaned mirror pod
 // will also be removed.
+// pod数据源接口，管理从 APIServer 和 File 和 http来源的资源
 type Manager interface {
 	// GetPods returns the regular pods bound to the kubelet and their spec.
 	GetPods() []*v1.Pod

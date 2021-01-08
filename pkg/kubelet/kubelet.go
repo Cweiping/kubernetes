@@ -181,11 +181,16 @@ const (
 
 // SyncHandler is an interface implemented by Kubelet, for testability
 type SyncHandler interface {
+	// 资源更新行为
 	HandlePodAdditions(pods []*v1.Pod)
 	HandlePodUpdates(pods []*v1.Pod)
 	HandlePodRemoves(pods []*v1.Pod)
+
+	// 防止 pod status 被意外修改
 	HandlePodReconcile(pods []*v1.Pod)
+	// 处理 pod 生命周期的核心逻辑
 	HandlePodSyncs(pods []*v1.Pod)
+	// 资源清理动作，避免异常数据缠残留
 	HandlePodCleanups() error
 }
 
@@ -288,12 +293,14 @@ func makePodSourceConfig(kubeCfg *kubeletconfiginternal.KubeletConfiguration, ku
 	cfg := config.NewPodConfig(config.PodConfigNotificationIncremental, kubeDeps.Recorder)
 
 	// define file config source
+	// static pod 监听方式
 	if kubeCfg.StaticPodPath != "" {
 		klog.Infof("Adding pod path: %v", kubeCfg.StaticPodPath)
 		config.NewSourceFile(kubeCfg.StaticPodPath, nodeName, kubeCfg.FileCheckFrequency.Duration, cfg.Channel(kubetypes.FileSource))
 	}
 
 	// define url config source
+	// http url pod 监听方式
 	if kubeCfg.StaticPodURL != "" {
 		klog.Infof("Adding pod url %q with HTTP header %v", kubeCfg.StaticPodURL, manifestURLHeader)
 		config.NewSourceURL(kubeCfg.StaticPodURL, manifestURLHeader, nodeName, kubeCfg.HTTPCheckFrequency.Duration, cfg.Channel(kubetypes.HTTPSource))
@@ -313,6 +320,7 @@ func makePodSourceConfig(kubeCfg *kubeletconfiginternal.KubeletConfiguration, ku
 		}
 	}
 
+	// 通过 APIServer 方式监听的pod
 	if kubeDeps.KubeClient != nil {
 		klog.Infof("Watching apiserver")
 		if updatechannel == nil {
@@ -1320,6 +1328,7 @@ func (kl *Kubelet) StartGarbageCollection() {
 // initializeModules will initialize internal modules that do not require the container runtime to be up.
 // Note that the modules here must not depend on modules that are not initialized here.
 func (kl *Kubelet) initializeModules() error {
+	// 1. 注册 prometheus 的 metrics
 	// Prometheus metrics.
 	metrics.Register(
 		kl.runtimeCache,
@@ -1329,11 +1338,13 @@ func (kl *Kubelet) initializeModules() error {
 	metrics.SetNodeName(kl.nodeName)
 	servermetrics.Register()
 
+	// 2. 初始化文件目录
 	// Setup filesystem directories.
 	if err := kl.setupDataDirs(); err != nil {
 		return err
 	}
 
+	// 3. 初始化容器日志目录
 	// If the container logs directory does not exist, create it.
 	if _, err := os.Stat(ContainerLogsDir); err != nil {
 		if err := kl.os.MkdirAll(ContainerLogsDir, 0755); err != nil {
@@ -1341,19 +1352,23 @@ func (kl *Kubelet) initializeModules() error {
 		}
 	}
 
+	// 4. 运行管理镜像 GC 的模块 kl.imageManager
 	// Start the image manager.
 	kl.imageManager.Start()
 
+	// 5. 启动证书管理器
 	// Start the certificate manager if it was enabled.
 	if kl.serverCertificateManager != nil {
 		kl.serverCertificateManager.Start()
 	}
 
+	// 6. 通过 cadviser 去内核日志抓取系统 OOM日志，判断系统内存是否溢出
 	// Start out of memory watcher.
 	if err := kl.oomWatcher.Start(kl.nodeRef); err != nil {
 		return fmt.Errorf("failed to start OOM watcher %v", err)
 	}
 
+	// 7. 启用磁盘资源占用收集，存储到缓存中
 	// Start resource analyzer
 	kl.resourceAnalyzer.Start()
 
@@ -1399,56 +1414,70 @@ func (kl *Kubelet) initializeRuntimeDependentModules() {
 
 // Run starts the kubelet reacting to config updates
 func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
+	// 1. 初始化 log 服务
 	if kl.logServer == nil {
 		kl.logServer = http.StripPrefix("/logs/", http.FileServer(http.Dir("/var/log/")))
 	}
+	// 2. 检查 kubeClient
 	if kl.kubeClient == nil {
 		klog.Warning("No api server defined - no node status update will be sent.")
 	}
 
+	// 3. 启动云资源同步管理服务
 	// Start the cloud provider sync manager
 	if kl.cloudResourceSyncManager != nil {
 		go kl.cloudResourceSyncManager.Run(wait.NeverStop)
 	}
-
+	// 4. 初始化内部模块，不依赖容器运行时
 	if err := kl.initializeModules(); err != nil {
 		kl.recorder.Eventf(kl.nodeRef, v1.EventTypeWarning, events.KubeletSetupFailed, err.Error())
 		klog.Fatal(err)
 	}
-
+	// 5. 启动磁盘管理控制器
 	// Start volume manager
 	go kl.volumeManager.Run(kl.sourcesReady, wait.NeverStop)
 
 	if kl.kubeClient != nil {
+		// 6. 同步节点状态到 APIServer
 		// Start syncing node status immediately, this may set up things the runtime needs to run.
 		go wait.Until(kl.syncNodeStatus, kl.nodeStatusUpdateFrequency, wait.NeverStop)
+		// 7. 快速一次同步状态
 		go kl.fastStatusUpdateOnce()
 
+		// 8. 维持节点心跳
 		// start syncing lease
 		go kl.nodeLeaseController.Run(wait.NeverStop)
 	}
+	// 9. 持续监听容器运行时的配置
 	go wait.Until(kl.updateRuntimeUp, 5*time.Second, wait.NeverStop)
 
 	// Set up iptables util rules
 	if kl.makeIPTablesUtilChains {
+		// 10. 监听 iptables 规则
 		kl.initNetworkUtil()
 	}
 
+	// 11. 接受 podKillingCh 的数据，执行pod的删除操作
 	// Start a goroutine responsible for killing pods (that are not properly
 	// handled by pod workers).
 	go wait.Until(kl.podKiller, 1*time.Second, wait.NeverStop)
 
 	// Start component sync loops.
+	// 12. 启动 pod 状态同步组件
 	kl.statusManager.Start()
+	// 13. 启动探针控制器
 	kl.probeManager.Start()
 
 	// Start syncing RuntimeClasses if enabled.
 	if kl.runtimeClassManager != nil {
+		// 14. 启动容器运行时控制器
 		kl.runtimeClassManager.Start(wait.NeverStop)
 	}
 
 	// Start the pod lifecycle event generator.
+	// 15. pod 生命周期事件生成控制器
 	kl.pleg.Start()
+	// 16. 主循环监控
 	kl.syncLoop(updates, kl)
 }
 
@@ -1479,6 +1508,7 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 // This operation writes all events that are dispatched in order to provide
 // the most accurate information possible about an error situation to aid debugging.
 // Callers should not throw an event if this operation returns an error.
+// 真正执行pod的状态更新的方法
 func (kl *Kubelet) syncPod(o syncPodOptions) error {
 	// pull out the required options
 	pod := o.pod
@@ -1852,6 +1882,11 @@ func (kl *Kubelet) syncLoop(updates <-chan kubetypes.PodUpdate, handler SyncHand
 		duration = base
 
 		kl.syncLoopMonitor.Store(kl.clock.Now())
+		// 1. 从 configCh 接收pod状态的更新并进行处理；
+		// 2. 从 plegCh 接收 pod的时间
+		// 3. 从 syncCh 接收需要特别的事件，同步Terminal的输入输出
+		// 4. 从 Update 接收探针事件，同步pod的信息
+		// 5. 从 housekeepingCh 接收事件，清理不健康的pod
 		if !kl.syncLoopIteration(updates, handler, syncTicker.C, housekeepingTicker.C, plegCh) {
 			break
 		}
@@ -1918,6 +1953,7 @@ func (kl *Kubelet) syncLoopIteration(configCh <-chan kubetypes.PodUpdate, handle
 			handler.HandlePodRemoves(u.Pods)
 		case kubetypes.RECONCILE:
 			klog.V(4).Infof("SyncLoop (RECONCILE, %q): %q", u.Source, format.Pods(u.Pods))
+			// 防止 pod status 的意外修改
 			handler.HandlePodReconcile(u.Pods)
 		case kubetypes.DELETE:
 			klog.V(2).Infof("SyncLoop (DELETE, %q): %q", u.Source, format.Pods(u.Pods))
