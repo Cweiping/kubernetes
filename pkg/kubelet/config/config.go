@@ -173,6 +173,7 @@ func (s *podStorage) Merge(source string, change interface{}) error {
 	defer s.updateLock.Unlock()
 
 	seenBefore := s.sourcesSeen.Has(source)
+	// 将获得的 pod 进行分类,生成对应的更新事件，并将其加入待处理的Channel中
 	adds, updates, deletes, removes, reconciles, restores := s.merge(source, change)
 	firstSet := !seenBefore && s.sourcesSeen.Has(source)
 

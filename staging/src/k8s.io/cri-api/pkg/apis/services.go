@@ -90,10 +90,16 @@ type ContainerStatsManager interface {
 
 // RuntimeService interface should be implemented by a container runtime.
 // The methods should be thread-safe.
+// 容器运行时相关接口
 type RuntimeService interface {
+	// 容器运行时的版本信息
 	RuntimeVersioner
+	// container 的操作
 	ContainerManager
+	// podSandbox 的操作
+	// TODO ???
 	PodSandboxManager
+	// 容器状态获取
 	ContainerStatsManager
 
 	// UpdateRuntimeConfig updates runtime configuration if specified
@@ -105,6 +111,7 @@ type RuntimeService interface {
 // ImageManagerService interface should be implemented by a container image
 // manager.
 // The methods should be thread-safe.
+// 管理容器运行时的镜像
 type ImageManagerService interface {
 	// ListImages lists the existing images.
 	ListImages(filter *runtimeapi.ImageFilter) ([]*runtimeapi.Image, error)
